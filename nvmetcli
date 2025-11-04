@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 '''
 Frontend to access to the NVMe target configfs hierarchy
@@ -22,23 +22,28 @@ from __future__ import print_function
 
 import os
 import sys
-import configshell_fb as configshell
-import nvmet as nvme
 import errno
 from string import hexdigits
 import uuid
 
+import configshell_fb as configshell
+import nvmet as nvme
+
+BaseConfigNode = configshell.ConfigNode
+BaseConfigShell = configshell.ConfigShell
 
 def ngiud_set(nguid):
     return any(c in hexdigits and c != '0' for c in nguid)
 
 
-class UINode(configshell.node.ConfigNode):
+class UINode(BaseConfigNode):
     def __init__(self, name, parent=None, cfnode=None, shell=None):
-        configshell.node.ConfigNode.__init__(self, name, parent, shell)
+        # Use the normalized base class instead of configshell.node.ConfigNode
+        BaseConfigNode.__init__(self, name, parent, shell)
+
         self.cfnode = cfnode
         if self.cfnode:
-            if self.cfnode.attr_groups:
+            if getattr(self.cfnode, "attr_groups", None):
                 for group in self.cfnode.attr_groups:
                     self._init_group(group)
         self.refresh()
@@ -48,11 +53,12 @@ class UINode(configshell.node.ConfigNode):
                 lambda self, attr:
                     self.cfnode.get_attr(group, attr))
         setattr(self.__class__, "ui_setgroup_%s" % group,
-                lambda self, attr, value:
-                    self.cfnode.set_attr(group, attr, value))
+                lambda self, attr, val:
+                    self.cfnode.set_attr(group, attr, val))
 
         attrs = self.cfnode.list_attrs(group)
         attrs_ro = self.cfnode.list_attrs(group, writable=False)
+
         for attr in attrs:
             writable = attr not in attrs_ro
 
@@ -68,7 +74,7 @@ class UINode(configshell.node.ConfigNode):
 
     def ui_command_refresh(self):
         '''
-        Refreshes and updates the objects tree from the current path.
+        Refresh the internal state
         '''
         self.refresh()
 
@@ -704,7 +710,7 @@ def clear(unused):
 
 
 def ls(unused):
-    shell = configshell.shell.ConfigShell('~/.nvmetcli')
+    shell = BaseConfigShell('~/.nvmetcli')
     UIRootNode(shell)
     shell.run_cmdline("ls")
     sys.exit(0)
@@ -712,42 +718,55 @@ def ls(unused):
 
 funcs = dict(save=save, restore=restore, clear=clear, ls=ls)
 
-
 def main():
+    # must be root
     if os.geteuid() != 0:
         print("%s: must run as root." % sys.argv[0], file=sys.stderr)
         sys.exit(-1)
 
-    if len(sys.argv) > 3:
+    argc = len(sys.argv)
+
+    # too many args -> usage
+    if argc > 3:
         usage()
 
-    if len(sys.argv) == 2 or len(sys.argv) == 3:
-        if sys.argv[1] == "--help":
+    # command mode: nvmetcli <cmd> [arg]
+    if argc == 2 or argc == 3:
+        cmd = sys.argv[1]
+
+        # nvmetcli --help
+        if cmd == "--help":
             usage()
 
-        if sys.argv[1] not in funcs.keys():
+        # unknown command -> usage
+        if cmd not in funcs:
             usage()
 
-        if len(sys.argv) == 3:
-            savefile = sys.argv[2]
-        else:
-            savefile = None
+        # optional argument, usually the savefile path for save/restore
+        savefile = sys.argv[2] if argc == 3 else None
 
-        funcs[sys.argv[1]](savefile)
+        try:
+            funcs[cmd](savefile)
+        except Exception as msg:
+            # don't assume a shell exists here
+            print("nvmetcli %s: %s" % (cmd, msg), file=sys.stderr)
+            sys.exit(1)
+
+        return
+
+    # interactive mode (argc == 1)
+    shell = None
+    try:
+        shell = BaseConfigShell('~/.nvmetcli')
+        UIRootNode(shell)
+    except Exception as msg:
+        print("nvmetcli: failed to initialize shell: %s" % msg, file=sys.stderr)
         return
 
     try:
-        shell = configshell.shell.ConfigShell('~/.nvmetcli')
-        UIRootNode(shell)
+        shell.run_interactive()
     except Exception as msg:
-        shell.log.error(str(msg))
-        return
-
-    while not shell._exit:
-        try:
-            shell.run_interactive()
-        except Exception as msg:
-            shell.log.error(str(msg))
+        print("nvmetcli (interactive): %s" % msg, file=sys.stderr)
 
 
 if __name__ == "__main__":

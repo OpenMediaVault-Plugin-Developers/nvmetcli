@@ -1,0 +1,15 @@
+[Unit]
+Description=NVMe-oF target configuration (nvmet)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=/sbin/modprobe nvmet
+ExecStartPre=/sbin/modprobe nvmet-tcp
+ExecStart=/usr/sbin/nvmetcli restore /etc/nvmet/config.json
+ExecStop=/usr/sbin/nvmetcli clear
+
+[Install]
+WantedBy=multi-user.target

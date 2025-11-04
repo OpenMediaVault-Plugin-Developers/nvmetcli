@@ -1,2 +1,4 @@
-nvmetcli		/usr/sbin
-nvmet.service		/lib/systemd/system
+nvmetcli usr/sbin/
+nvmet/ usr/lib/python3/dist-packages/nvmet/
+debian/nvmet.service lib/systemd/system/
+debian/config.json etc/nvmet/
